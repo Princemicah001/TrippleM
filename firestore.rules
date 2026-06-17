@@ -1,0 +1,132 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 1. Global Default Deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Global assist functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner() {
+      return isSignedIn() && (
+        request.auth.uid == 'admin' ||
+        request.auth.token.email.toLowerCase() == 'micahprincemicah001@gmail.com' ||
+        request.auth.token.email.toLowerCase() == 'princemicahojiambo@gmail.com'
+      );
+    }
+
+    function isValidId(id) {
+       return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    // Validation for Business/Shop
+    function isValidBusiness(data) {
+      return data.keys().hasAll(['id', 'name', 'location', 'status'])
+        && data.id is string && data.id.size() <= 128
+        && data.name is string && data.name.size() <= 200
+        && data.location is string && data.location.size() <= 200
+        && (data.status == 'active' || data.status == 'inactive');
+    }
+
+    // Validation for Product
+    function isValidProduct(data) {
+      return data.keys().hasAll(['id', 'bizId', 'name', 'price', 'stock'])
+        && data.id is string && data.id.size() <= 128
+        && data.bizId is string && data.bizId.size() <= 128
+        && data.name is string && data.name.size() <= 200
+        && data.price is number
+        && data.stock is number;
+    }
+
+    // Validation for Team (relaxed keys limit to support optional phone, pin, googleEmail and username)
+    function isValidTeam(data) {
+      return data.keys().hasAll(['id', 'name', 'role', 'bizId', 'status'])
+        && data.id is string && data.id.size() <= 128
+        && data.name is string && data.name.size() <= 200
+        && data.role is string && data.role.size() <= 100
+        && data.bizId is string && data.bizId.size() <= 128
+        && (data.status == 'active' || data.status == 'suspended')
+        && (!data.keys().contains('phone') || data.phone is string)
+        && (!data.keys().contains('pin') || data.pin is string)
+        && (!data.keys().contains('googleEmail') || data.googleEmail is string)
+        && (!data.keys().contains('username') || data.username is string);
+    }
+
+    // Validation for Transaction
+    function isValidTransaction(data) {
+      return data.keys().hasAll(['id', 'type', 'amount', 'bizId', 'userId', 'time'])
+        && data.id is string && data.id.size() <= 128
+        && (data.type == 'sale' || data.type == 'expense' || data.type == 'cash_count')
+        && data.amount is number
+        && data.bizId is string && data.bizId.size() <= 128
+        && data.userId is string && data.userId.size() <= 128
+        && data.time is string && data.time.size() <= 64;
+    }
+
+    // Validation for AuditLog
+    function isValidAuditLog(data) {
+      return data.keys().hasAll(['id', 'action', 'details', 'time', 'isAlert'])
+        && data.id is string && data.id.size() <= 128
+        && data.action is string && data.action.size() <= 200
+        && data.details is string && data.details.size() <= 1000
+        && data.time is string && data.time.size() <= 64
+        && data.isAlert is bool;
+    }
+
+    // ---- MATCH RULES FOR EACH COLLECTION ----
+
+    // 1. Businesses
+    match /businesses/{bizId} {
+      allow read: if isSignedIn();
+      allow write: if isOwner() || (isSignedIn() && isValidId(bizId) && isValidBusiness(incoming()));
+    }
+
+    // 2. Shops (Support alias for businesses as requested)
+    match /shops/{shopId} {
+      allow read: if isSignedIn();
+      allow write: if isOwner() || (isSignedIn() && isValidId(shopId) && isValidBusiness(incoming()));
+    }
+
+    // 3. Products
+    match /products/{prodId} {
+      allow read: if isSignedIn();
+      allow write: if isOwner() || (isSignedIn() && isValidId(prodId) && isValidProduct(incoming()));
+    }
+
+    // 4. Team Members (Crew)
+    match /team/{memberId} {
+      allow read: if isSignedIn();
+      allow write: if isOwner() || (isSignedIn() && isValidId(memberId) && isValidTeam(incoming()));
+    }
+
+    // 5. Ledger Transactions
+    match /transactions/{txId} {
+      allow read: if isSignedIn();
+      allow write: if isOwner() || (isSignedIn() && isValidId(txId) && isValidTransaction(incoming()));
+    }
+
+    // 6. Security & Audit Logs
+    match /logs/{logId} {
+      allow read: if isSignedIn();
+      allow write: if isOwner() || (isSignedIn() && isValidId(logId) && isValidAuditLog(incoming()));
+    }
+
+    // 7. Historical Log Edit Requests
+    match /edit_requests/{reqId} {
+      allow read, write: if isSignedIn();
+    }
+
+    // Test route
+    match /test/{testId} {
+      allow read, write: if true;
+    }
+  }
+}

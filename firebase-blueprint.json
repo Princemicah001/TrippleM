@@ -1,0 +1,119 @@
+{
+  "entities": {
+    "Business": {
+      "title": "Business",
+      "description": "Information about a physical retail outlet or shop branch.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique identifier of the business branch." },
+        "name": { "type": "string", "description": "Name of the business outlet." },
+        "location": { "type": "string", "description": "Address or general landmark location." },
+        "status": { "type": "string", "enum": ["active", "inactive"], "description": "Current operations status." }
+      },
+      "required": ["id", "name", "location", "status"]
+    },
+    "Product": {
+      "title": "Product",
+      "description": "Stock inventory items associated with specific shop branches.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique identifier of the product SKU." },
+        "bizId": { "type": "string", "description": "Reference of the target business branch." },
+        "name": { "type": "string", "description": "Title name of the inventory item." },
+        "price": { "type": "number", "description": "Selling price of the item." },
+        "stock": { "type": "number", "description": "Current quantity level in stock." }
+      },
+      "required": ["id", "bizId", "name", "price", "stock"]
+    },
+    "TeamMember": {
+      "title": "TeamMember",
+      "description": "Staff registers containing managers and cashiers credentials for terminal logins.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Staff worker authenticating ID." },
+        "name": { "type": "string", "description": "Full formal name." },
+        "role": { "type": "string", "description": "Operational position (e.g., Cashier/Manager)." },
+        "bizId": { "type": "string", "description": "Assigned home branch." },
+        "status": { "type": "string", "enum": ["active", "suspended"], "description": "Sign-in clearance permissions status." },
+        "phone": { "type": "string", "description": "Authorized cellphone login registration identity." },
+        "pin": { "type": "string", "description": "Secret 4+ digit terminal security code." }
+      },
+      "required": ["id", "name", "role", "bizId", "status", "phone", "pin"]
+    },
+    "Transaction": {
+      "title": "Transaction",
+      "description": "Operational receipts recording sales income, stocking, or running expenses.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique transaction identity code." },
+        "type": { "type": "string", "enum": ["sale", "expense", "cash_count"], "description": "Transaction category classification." },
+        "amount": { "type": "number", "description": "Monetary value logged." },
+        "bizId": { "type": "string", "description": "Associated business outlet ID." },
+        "userId": { "type": "string", "description": "Underlying attendant registering the entry." },
+        "time": { "type": "string", "description": "ISO timestamp of transaction finalization." },
+        "items": { "type": "number", "description": "Aggregate quantity of goods sold." },
+        "category": { "type": "string", "description": "Underlying grouping categorisation for expenses." },
+        "details": { "type": "string", "description": "Additional text logs." }
+      },
+      "required": ["id", "type", "amount", "bizId", "userId", "time"]
+    },
+    "AuditLog": {
+      "title": "AuditLog",
+      "description": "Operational log capturing business dashboard actions and systems incidents.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Transaction log ID." },
+        "action": { "type": "string", "description": "Concise summary title of the action." },
+        "details": { "type": "string", "description": "High fidelity specifications report." },
+        "time": { "type": "string", "description": "Execution timestamp." },
+        "isAlert": { "type": "boolean", "description": "Mark as a critical alert warning." },
+        "bizId": { "type": "string", "description": "Optional branch connection link." }
+      },
+      "required": ["id", "action", "details", "time", "isAlert"]
+    },
+    "LogEditRequest": {
+      "title": "LogEditRequest",
+      "description": "Requests made by employees to edit historical calendar transaction logs.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique request ID." },
+        "txId": { "type": "string", "description": "ID of target transaction." },
+        "bizId": { "type": "string", "description": "ID of associated business branch." },
+        "userId": { "type": "string", "description": "ID of requesting employee." },
+        "userName": { "type": "string", "description": "Name of requesting employee." },
+        "originalData": { "type": "object", "description": "Original transaction snapshot." },
+        "proposedData": { "type": "object", "description": "Proposed edited transaction details." },
+        "status": { "type": "string", "enum": ["pending", "accepted", "rejected"], "description": "Current authorization status." },
+        "time": { "type": "string", "description": "Request creation ISO timestamp." },
+        "adminMemo": { "type": "string", "description": "Optional administrative review memo." }
+      },
+      "required": ["id", "txId", "bizId", "userId", "userName", "originalData", "proposedData", "status", "time"]
+    }
+  },
+  "firestore": {
+    "businesses": {
+      "schema": { "$ref": "#/entities/Business" },
+      "description": "Registered retail outlets."
+    },
+    "products": {
+      "schema": { "$ref": "#/entities/Product" },
+      "description": "A global directory list of structural branch products."
+    },
+    "team": {
+      "schema": { "$ref": "#/entities/TeamMember" },
+      "description": "All authorized personnel, including the executive owner and store cashiers."
+    },
+    "transactions": {
+      "schema": { "$ref": "#/entities/Transaction" },
+      "description": "Receipt ledgers tracking both inflows and outflows."
+    },
+    "logs": {
+      "schema": { "$ref": "#/entities/AuditLog" },
+      "description": "Secure track audit stream log."
+    },
+    "edit_requests": {
+      "schema": { "$ref": "#/entities/LogEditRequest" },
+      "description": "Store cashier/manager edit request ledgers."
+    }
+  }
+}
