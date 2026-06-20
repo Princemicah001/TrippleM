@@ -15,7 +15,13 @@ service cloud.firestore {
       return isSignedIn() && (
         request.auth.uid == 'admin' ||
         request.auth.token.email.toLowerCase() == 'micahprincemicah001@gmail.com' ||
-        request.auth.token.email.toLowerCase() == 'princemicahojiambo@gmail.com'
+        request.auth.token.email.toLowerCase() == 'princemicahojiambo@gmail.com' ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+         (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'owner' ||
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.admin == true)) ||
+        (exists(/databases/$(database)/documents/team/$(request.auth.uid)) && 
+         get(/databases/$(database)/documents/team/$(request.auth.uid)).data.role == 'owner')
       );
     }
 
@@ -121,6 +127,11 @@ service cloud.firestore {
 
     // 7. Historical Log Edit Requests
     match /edit_requests/{reqId} {
+      allow read, write: if isSignedIn();
+    }
+
+    // 8. Users Authentication & Credentials Collection
+    match /users/{userId} {
       allow read, write: if isSignedIn();
     }
 

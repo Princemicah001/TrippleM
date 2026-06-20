@@ -29,6 +29,7 @@ interface EmployeeDashboardProps {
   onLogout: () => void;
   onShowToast: (msg: string, isError?: boolean) => void;
   onUpdateProfile: (updated: TeamMember) => boolean;
+  onAddProduct?: (bizId: string, name: string, price: number, stock: number, purchasePrice?: number) => void;
   onCreateEditRequest?: (txId: string, proposed: { amount: number; category?: string; details?: string }) => void;
   editRequests?: LogEditRequest[];
 }
@@ -44,6 +45,7 @@ export default function EmployeeDashboard({
   onLogout,
   onShowToast,
   onUpdateProfile,
+  onAddProduct,
   onCreateEditRequest,
   editRequests,
 }: EmployeeDashboardProps) {
@@ -85,6 +87,15 @@ export default function EmployeeDashboard({
   const [profileUsername, setProfileUsername] = useState(currentUser.username || '');
   const [profilePhone, setProfilePhone] = useState(currentUser.phone || '');
   const [profilePin, setProfilePin] = useState(currentUser.pin || '');
+
+  // 6. Cashier product creation hooks
+  const [employeeAddProdModal, setEmployeeAddProdModal] = useState(false);
+  const [empProdName, setEmpProdName] = useState('');
+  const [empProdPrice, setEmpProdPrice] = useState<number | ''>('');
+  const [empProdStock, setEmpProdStock] = useState<number | ''>('');
+  const [empProdPurchasePrice, setEmpProdPurchasePrice] = useState<number | ''>('');
+  const [empPurchasePriceMode, setEmpPurchasePriceMode] = useState<'unit' | 'bulk'>('unit');
+  const [empProdBulkPrice, setEmpProdBulkPrice] = useState<number | ''>('');
 
   // Keep profile edit state in sync with updated currentUser prop values
   React.useEffect(() => {
@@ -283,6 +294,39 @@ export default function EmployeeDashboard({
     const success = onUpdateProfile(updatedMember);
     if (success) {
       setMode('menu');
+    }
+  };
+
+  const handleEmployeeAddProductSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!currentUser.bizId) {
+      onShowToast('No active business branch assigned', true);
+      return;
+    }
+    if (!empProdName.trim() || empProdPrice === '' || Number(empProdPrice) <= 0) {
+      onShowToast('Enter valid product name and retail price', true);
+      return;
+    }
+    let calculatedBp = 0;
+    if (empPurchasePriceMode === 'bulk' && empProdBulkPrice !== '' && Number(empProdBulkPrice) > 0) {
+      const stockQty = Number(empProdStock) || 1;
+      calculatedBp = Number(empProdBulkPrice) / stockQty;
+    } else if (empProdPurchasePrice !== '') {
+      calculatedBp = Number(empProdPurchasePrice);
+    }
+
+    if (onAddProduct) {
+      onAddProduct(currentUser.bizId, empProdName, Number(empProdPrice), Number(empProdStock || 0), calculatedBp);
+      onShowToast(`Stock item "${empProdName}" successfully created!`);
+      // Reset
+      setEmpProdName('');
+      setEmpProdPrice('');
+      setEmpProdStock('');
+      setEmpProdPurchasePrice('');
+      setEmpProdBulkPrice('');
+      setEmployeeAddProdModal(false);
+    } else {
+      onShowToast('Product creation service not available', true);
     }
   };
 
@@ -661,7 +705,21 @@ export default function EmployeeDashboard({
 
             {/* List products step */}
             {!selectedProdToRestock ? (
-              <div className="space-y-2.5">
+              <div className="space-y-3">
+                <div className="flex justify-between items-center bg-white border border-slate-200 p-3.5 rounded-xl shadow-xs">
+                  <div>
+                    <span className="block text-xs font-extrabold text-slate-800 uppercase tracking-wide">Missing an item?</span>
+                    <span className="block text-[10px] text-slate-400 mt-0.5">Add a new stock item directly into catalog</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setEmployeeAddProdModal(true)}
+                    className="px-3 py-2 bg-slate-900 hover:bg-slate-800 text-white font-bold text-[10px] uppercase tracking-wider rounded-lg transition cursor-pointer shrink-0"
+                  >
+                    + Create Stock Item
+                  </button>
+                </div>
+
                 <p className="text-xs text-slate-500 font-medium">Choose product:</p>
                 {getBranchProducts().map((p) => {
                   return (
@@ -1243,6 +1301,149 @@ export default function EmployeeDashboard({
           </div>
         )}
       </div>
+
+      {/* 4. Cashier stock creation modal */}
+      {employeeAddProdModal && (
+        <div className="fixed inset-0 z-55 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 animate-fade-in text-left">
+          <div className="bg-white border border-slate-200 p-5 rounded-2xl shadow-xl w-full max-w-md space-y-4 animate-slide-up">
+            <div className="flex justify-between items-center border-b border-slate-100 pb-2.5">
+              <h4 className="font-extrabold text-slate-950 text-sm uppercase tracking-wider">
+                Create New Stock Item
+              </h4>
+              <button
+                type="button"
+                onClick={() => setEmployeeAddProdModal(false)}
+                className="text-xs font-bold text-slate-400 hover:text-slate-900 cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleEmployeeAddProductSubmit} className="space-y-4 text-left">
+              <div>
+                <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1-5">
+                  Product Name
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={empProdName}
+                  onChange={(e) => setEmpProdName(e.target.value)}
+                  className="w-full border border-slate-200 p-2.5 text-xs rounded-xl outline-none focus:border-slate-900 font-sans font-semibold"
+                  placeholder="e.g. Lavender Oil 10ml"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3.5">
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1-5">
+                    Selling Price (KSh)
+                  </label>
+                  <input
+                    type="number"
+                    required
+                    min="1"
+                    value={empProdPrice}
+                    onChange={(e) => setEmpProdPrice(e.target.value === '' ? '' : Number(e.target.value))}
+                    className="w-full border border-slate-200 p-2.5 text-xs rounded-xl outline-none focus:border-slate-900 font-sans font-semibold"
+                    placeholder="e.g. 1200"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1-5">
+                    Starting Stock
+                  </label>
+                  <input
+                    type="number"
+                    required
+                    min="0"
+                    value={empProdStock}
+                    onChange={(e) => setEmpProdStock(e.target.value === '' ? '' : Number(e.target.value))}
+                    className="w-full border border-slate-200 p-2.5 text-xs rounded-xl outline-none focus:border-slate-900 font-sans font-semibold"
+                    placeholder="e.g. 20"
+                  />
+                </div>
+              </div>
+
+              {/* Purchase entries */}
+              <div className="space-y-3 bg-slate-50 p-3 rounded-xl border border-slate-200">
+                <div className="flex justify-between items-center text-[10px]">
+                  <span className="font-bold text-slate-500 uppercase tracking-wider font-sans">Purchase Price Entry</span>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setEmpPurchasePriceMode('unit')}
+                      className={`px-2 py-0.5 rounded font-bold cursor-pointer transition text-[9px] ${
+                        empPurchasePriceMode === 'unit' ? 'bg-slate-900 text-white' : 'bg-slate-200 text-slate-700'
+                      }`}
+                    >
+                      Unit BP
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setEmpPurchasePriceMode('bulk')}
+                      className={`px-2 py-0.5 rounded font-bold cursor-pointer transition text-[9px] ${
+                        empPurchasePriceMode === 'bulk' ? 'bg-slate-900 text-white' : 'bg-slate-200 text-slate-700'
+                      }`}
+                    >
+                      Bulk Purchase
+                    </button>
+                  </div>
+                </div>
+
+                {empPurchasePriceMode === 'unit' ? (
+                  <div>
+                    <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-1">
+                      BP per Unit (Buying Price in KSh)
+                    </label>
+                    <input
+                      type="number"
+                      value={empProdPurchasePrice}
+                      onChange={(e) => setEmpProdPurchasePrice(e.target.value === '' ? '' : Number(e.target.value))}
+                      className="w-full border border-slate-200 bg-white p-2 text-xs rounded-lg outline-none focus:border-slate-900 font-semibold"
+                      placeholder="e.g. 700"
+                    />
+                  </div>
+                ) : (
+                  <div>
+                    <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-1">
+                      Total Bulk Purchase Cost (KSh)
+                    </label>
+                    <input
+                      type="number"
+                      value={empProdBulkPrice}
+                      onChange={(e) => setEmpProdBulkPrice(e.target.value === '' ? '' : Number(e.target.value))}
+                      className="w-full border border-slate-200 bg-white p-2 text-xs rounded-lg outline-none focus:border-slate-900 font-semibold"
+                      placeholder="e.g. 14000"
+                    />
+                    <p className="text-[9px] text-slate-400 mt-1">
+                      BP per unit will be auto calculated: {
+                        empProdBulkPrice && empProdStock ? `KSh ${(Number(empProdBulkPrice) / Math.max(1, Number(empProdStock))).toFixed(2)}` : '0.00'
+                      }
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              <div className="flex gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setEmployeeAddProdModal(false)}
+                  className="flex-1 py-2.5 border border-slate-200 text-slate-500 font-bold rounded-xl text-xs uppercase cursor-pointer hover:bg-slate-50 transition"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="flex-1 py-2.5 bg-slate-950 hover:bg-slate-900 text-white font-bold rounded-xl text-xs uppercase cursor-pointer transition shadow-md"
+                >
+                  Create Product
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

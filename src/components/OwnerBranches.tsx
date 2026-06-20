@@ -21,7 +21,7 @@ interface OwnerBranchesProps {
   onAddBranch: (name: string, location: string) => void;
   onEditBranch: (id: string, name: string, location: string, status: 'active' | 'inactive') => void;
   onDeleteBranch: (id: string) => void;
-  onAddProduct: (bizId: string, name: string, price: number, stock: number) => void;
+  onAddProduct: (bizId: string, name: string, price: number, stock: number, purchasePrice?: number) => void;
   onDeleteProduct: (prodId: string) => void;
   onRestockProduct: (prodId: string, addedQty: number, totalCost: number) => void;
   onShowToast: (msg: string, isError?: boolean) => void;
@@ -61,6 +61,9 @@ export default function OwnerBranches({
   const [prodName, setProdName] = useState('');
   const [prodPrice, setProdPrice] = useState<number | ''>('');
   const [prodStock, setProdStock] = useState<number | ''>('');
+  const [prodPurchasePrice, setProdPurchasePrice] = useState<number | ''>('');
+  const [purchasePriceMode, setPurchasePriceMode] = useState<'unit' | 'bulk'>('unit');
+  const [prodBulkPrice, setProdBulkPrice] = useState<number | ''>('');
 
   const [restockQty, setRestockQty] = useState<number | ''>('');
   const [restockCost, setRestockCost] = useState<number | ''>('');
@@ -110,6 +113,9 @@ export default function OwnerBranches({
     setProdName('');
     setProdPrice('');
     setProdStock(0);
+    setProdPurchasePrice('');
+    setProdBulkPrice('');
+    setPurchasePriceMode('unit');
     setModalType('add_prod');
   };
 
@@ -120,7 +126,14 @@ export default function OwnerBranches({
       onShowToast('Enter valid product name and retail price', true);
       return;
     }
-    onAddProduct(selectedBiz.id, prodName, Number(prodPrice), Number(prodStock || 0));
+    let calculatedBp = 0;
+    if (purchasePriceMode === 'bulk' && prodBulkPrice !== '' && Number(prodBulkPrice) > 0) {
+      const stockQty = Number(prodStock) || 1;
+      calculatedBp = Number(prodBulkPrice) / stockQty;
+    } else if (prodPurchasePrice !== '') {
+      calculatedBp = Number(prodPurchasePrice);
+    }
+    onAddProduct(selectedBiz.id, prodName, Number(prodPrice), Number(prodStock || 0), calculatedBp);
     setModalType(null);
   };
 
@@ -439,6 +452,67 @@ export default function OwnerBranches({
                       />
                     </div>
                   </div>
+
+                  {/* Purchase price option */}
+                  <div className="space-y-3 bg-slate-50 p-3 rounded-xl border border-slate-200">
+                    <div className="flex justify-between items-center text-[10px]">
+                      <span className="font-bold text-slate-500 uppercase tracking-wider font-sans">Purchase Price Entry Method</span>
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setPurchasePriceMode('unit')}
+                          className={`px-2 py-0.5 rounded font-bold cursor-pointer transition text-[9px] ${
+                            purchasePriceMode === 'unit' ? 'bg-slate-900 text-white' : 'bg-slate-200 text-slate-700'
+                          }`}
+                        >
+                          Per Unit (BP)
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setPurchasePriceMode('bulk')}
+                          className={`px-2 py-0.5 rounded font-bold cursor-pointer transition text-[9px] ${
+                            purchasePriceMode === 'bulk' ? 'bg-slate-900 text-white' : 'bg-slate-200 text-slate-700'
+                          }`}
+                        >
+                          Bulk Purchase
+                        </button>
+                      </div>
+                    </div>
+
+                    {purchasePriceMode === 'unit' ? (
+                      <div>
+                        <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-1">
+                          BP per Unit (Buying Price in KSh)
+                        </label>
+                        <input
+                          type="number"
+                          value={prodPurchasePrice}
+                          onChange={(e) => setProdPurchasePrice(e.target.value === '' ? '' : Number(e.target.value))}
+                          className="w-full border border-slate-200 bg-white p-2 text-xs rounded-lg outline-none focus:border-slate-900 font-semibold"
+                          placeholder="e.g. 600"
+                        />
+                      </div>
+                    ) : (
+                      <div>
+                        <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-1">
+                          Total Bulk Purchase Cost (KSh)
+                        </label>
+                        <input
+                          type="number"
+                          value={prodBulkPrice}
+                          onChange={(e) => setProdBulkPrice(e.target.value === '' ? '' : Number(e.target.value))}
+                          className="w-full border border-slate-200 bg-white p-2 text-xs rounded-lg outline-none focus:border-slate-900 font-semibold"
+                          placeholder="e.g. 30000"
+                        />
+                        <p className="text-[9px] text-slate-400 mt-1">
+                          BP per unit will be auto calculated: {
+                            prodBulkPrice && prodStock ? `KSh ${(Number(prodBulkPrice) / Math.max(1, Number(prodStock))).toFixed(2)}` : '0.00'
+                          }
+                        </p>
+                      </div>
+                    )}
+                  </div>
+
                   <button
                     type="submit"
                     className="w-full bg-slate-950 hover:bg-slate-900 text-white font-bold py-3 text-xs uppercase tracking-wider rounded-xl transition cursor-pointer shadow-md mt-2"

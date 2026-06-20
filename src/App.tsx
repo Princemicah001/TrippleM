@@ -118,6 +118,61 @@ export default function App() {
   const [currencySymbol, setCurrencySymbol] = useState(() => 'KSh');
   const [lowStockThreshold, setLowStockThreshold] = useState(() => Number(localStorage.getItem('tm_setting_low_stock_threshold') || '15'));
 
+  const checkDuplicateCredentials = (
+    excludeId: string | undefined,
+    phone: string,
+    username?: string,
+    googleEmail?: string
+  ): { hasDuplicate: boolean; message: string } => {
+    const raw = getTeam();
+    const phoneClean = phone.trim();
+    const usernameClean = username?.trim().toLowerCase();
+    const emailClean = googleEmail?.trim().toLowerCase();
+
+    for (const member of raw) {
+      if (excludeId && member.id === excludeId) continue;
+
+      // Check phone duplication
+      if (phoneClean && member.phone && member.phone.trim() === phoneClean) {
+        return {
+          hasDuplicate: true,
+          message: `The phone number "${phoneClean}" is already registered to ${member.id === 'admin' || member.role === 'owner' ? 'the Owner' : member.name}.`,
+        };
+      }
+
+      // Check username duplication
+      if (usernameClean && member.username && member.username.trim().toLowerCase() === usernameClean) {
+        return {
+          hasDuplicate: true,
+          message: `The username "${username}" is already taken by ${member.id === 'admin' || member.role === 'owner' ? 'the Owner' : member.name}.`,
+        };
+      }
+
+      // Check email duplication
+      if (emailClean && member.googleEmail && member.googleEmail.trim().toLowerCase() === emailClean) {
+        return {
+          hasDuplicate: true,
+          message: `The Google Email "${googleEmail}" is already registered to ${member.id === 'admin' || member.role === 'owner' ? 'the Owner' : member.name}.`,
+        };
+      }
+
+      // Cross duplication check to ensure emails/usernames/phones don't look like each other
+      if (usernameClean && member.googleEmail && member.googleEmail.trim().toLowerCase() === usernameClean) {
+        return {
+          hasDuplicate: true,
+          message: `The username "${username}" conflicts with another user's registered Google Email.`,
+        };
+      }
+      if (emailClean && member.username && member.username.trim().toLowerCase() === emailClean) {
+        return {
+          hasDuplicate: true,
+          message: `The Google Email "${googleEmail}" conflicts with another user's registered username.`,
+        };
+      }
+    }
+    return { hasDuplicate: false, message: '' };
+  };
+
   const handleSaveSettings = (
     name: string, 
     lowStock: number, 
@@ -126,6 +181,18 @@ export default function App() {
     username?: string, 
     googleEmail?: string
   ) => {
+    // Exclude owner document from conflict checks so they don't block themselves
+    const adminDoc = team.find(t => t.id === 'admin' || t.role === 'owner' || (currentUser && t.id === currentUser.id));
+    const adminId = adminDoc?.id || 'admin';
+
+    if (phone || username || googleEmail) {
+      const dup = checkDuplicateCredentials(adminId, phone || '', username, googleEmail);
+      if (dup.hasDuplicate) {
+        showToastMsg(`Failed to save settings: ${dup.message}`, true);
+        return;
+      }
+    }
+
     setEnterpriseName(name);
     setLowStockThreshold(lowStock);
     localStorage.setItem('tm_setting_enterprise_name', name);
@@ -151,7 +218,7 @@ export default function App() {
 
     // Now update the admin document inside Firestore team collection as well!
     const nextTeam = team.map(member => {
-      if (member.id === 'admin' || member.role === 'owner') {
+      if (member.id === 'admin' || member.role === 'owner' || (currentUser && member.id === currentUser.id)) {
         return {
           ...member,
           phone: phone || member.phone,
@@ -163,10 +230,10 @@ export default function App() {
       return member;
     });
 
-    const adminExists = team.some(member => member.id === 'admin' || member.role === 'owner');
+    const adminExists = team.some(member => member.id === 'admin' || member.role === 'owner' || (currentUser && member.id === currentUser.id));
     if (!adminExists) {
       const adminMock: TeamMember = {
-        id: 'admin',
+        id: adminId,
         name: 'Admin',
         role: 'owner',
         bizId: '',
@@ -280,12 +347,16 @@ export default function App() {
       if (result.user && result.user.email) {
         const email = result.user.email.toLowerCase();
         const phoneNumber = result.user.phoneNumber;
+        const uid = result.user.uid;
         
         // Let's check team snapshot/memory cache (including seeded admin doc)
         const allStaff = getTeam();
         
-        // 1. Check exact match by googleEmail
-        let tm = allStaff.find(t => t.googleEmail && t.googleEmail.toLowerCase() === email);
+        // 1. Check exact match by googleEmail or by document id matching uid
+        let tm = allStaff.find(t => 
+          (t.googleEmail && t.googleEmail.toLowerCase() === email) || 
+          (t.id === uid)
+        );
         
         // 2. If no exact match, check other fields and link simultaneously!
         if (!tm) {
@@ -295,20 +366,43 @@ export default function App() {
           );
           
           if (tm) {
-            // Found matching profile! Link Google email simultaneously 
+            // Found matching profile! Link Google email and align ID to uid
+            const oldId = tm.id;
+            tm.id = uid;
+            tm.googleEmail = email;
+            
             const updatedTeam = allStaff.map(t => {
-              if (t.id === tm!.id) {
-                return {
-                  ...t,
-                  googleEmail: email,
-                };
+              if (t.id === oldId) {
+                return tm!;
               }
               return t;
             });
             saveTeam(updatedTeam);
             setTeam(updatedTeam);
-            logAction('Profile Auto-Linked', `Simultaneously linked Google Email ${email} to ${tm.name}'s register profile.`);
+            if (oldId !== uid) {
+              deleteDocumentFromFirestore('team', oldId);
+            }
+            logAction('Profile Auto-Linked', `Simultaneously linked Google Email ${email} and Auth UID to ${tm.name}'s profile.`);
             showToastMsg(`Simultaneously linked Google Email ${email} to your account!`);
+          }
+        } else {
+          // If match found by email but its document ID is old (e.g. 'admin'), let's align it!
+          if (tm.id !== uid) {
+            const oldId = tm.id;
+            tm.id = uid;
+            
+            const updatedTeam = allStaff.map(t => {
+              if (t.id === oldId) {
+                return tm!;
+              }
+              return t;
+            });
+            saveTeam(updatedTeam);
+            setTeam(updatedTeam);
+            if (oldId !== uid) {
+              deleteDocumentFromFirestore('team', oldId);
+            }
+            logAction('Profile UID Aligned', `Aligned ${tm.name}'s profile document ID to authenticated UID: ${uid}`);
           }
         }
 
@@ -320,7 +414,7 @@ export default function App() {
           const currentOwnerUsername = localStorage.getItem('tm_owner_username') || ownerUsername;
 
           const adminMock: TeamMember = {
-            id: 'admin',
+            id: uid, // Use real authenticating account uid!
             name: 'Admin',
             role: 'owner',
             bizId: '',
@@ -331,7 +425,7 @@ export default function App() {
             username: currentOwnerUsername,
           };
 
-          const nextTeam = [adminMock, ...allStaff.filter(t => t.id !== 'admin' && t.role !== 'owner')];
+          const nextTeam = [adminMock, ...allStaff.filter(t => t.id !== 'admin' && t.id !== uid && t.role !== 'owner')];
           saveTeam(nextTeam);
           setTeam(nextTeam);
           tm = adminMock;
@@ -339,10 +433,10 @@ export default function App() {
 
         // 4. Handle matching session user access
         if (tm) {
-          if (tm.role === 'owner' || tm.id === 'admin') {
+          if (tm.role === 'owner' || tm.id === 'admin' || tm.id === uid) {
             const hqAdmin: CurrentUser = {
               role: 'owner',
-              id: 'admin',
+              id: tm.id,
               name: tm.name || 'Admin',
             };
             setCurrentUser(hqAdmin);
@@ -686,26 +780,11 @@ export default function App() {
 
   // Self-service employee profile update handler
   const handleUpdateEmployeeProfile = (updatedMember: TeamMember) => {
-    // 1. Check duplicate username
-    if (updatedMember.username) {
-      const duplicateUsername = team.some(
-        (t) => t.id !== updatedMember.id && t.username?.toLowerCase() === updatedMember.username?.toLowerCase()
-      );
-      if (duplicateUsername) {
-        showToastMsg('Validation Error: The username is already taken by another staff member.', true);
-        return false;
-      }
-    }
-
-    // 2. Check duplicate phone
-    if (updatedMember.phone) {
-      const duplicatePhone = team.some(
-        (t) => t.id !== updatedMember.id && t.phone === updatedMember.phone
-      );
-      if (duplicatePhone) {
-        showToastMsg('Validation Error: The phone number is already registered to another staff member.', true);
-        return false;
-      }
+    // Validate credentials uniqueness across all fields
+    const dup = checkDuplicateCredentials(updatedMember.id, updatedMember.phone || '', updatedMember.username, updatedMember.googleEmail);
+    if (dup.hasDuplicate) {
+      showToastMsg(`Failed to save profile: ${dup.message}`, true);
+      return false;
     }
 
     // 3. Update team list in memory and database
@@ -809,7 +888,7 @@ export default function App() {
   };
 
   // 3. Product Catalog
-  const handleAddProduct = (bizId: string, name: string, price: number, stock: number) => {
+  const handleAddProduct = (bizId: string, name: string, price: number, stock: number, purchasePrice?: number) => {
     const raw = getProducts();
     const newProd: Product = {
       id: 'p_' + Math.random().toString(36).substring(2, 11),
@@ -817,11 +896,12 @@ export default function App() {
       name,
       price,
       stock,
+      purchasePrice: purchasePrice || 0,
     };
     raw.push(newProd);
     saveProducts(raw);
     const bizName = getBusinesses().find((b) => b.id === bizId)?.name || 'Branch';
-    logAction('Product Catalog Seeded', `Added item ${name} with base price KSh ${price.toLocaleString()} into ${bizName} inventory list.`);
+    logAction('Product Catalog Seeded', `Added item ${name} with selling price KSh ${price.toLocaleString()} and buying price per unit KSh ${(purchasePrice || 0).toLocaleString()} into ${bizName} inventory list.`);
     showToastMsg(`Product added to catalog.`);
     refreshAllState();
   };
@@ -878,7 +958,14 @@ export default function App() {
   };
 
   // 4. Team HR Members
-  const handleAddTeamMember = (name: string, role: string, bizId: string, phone: string, pin: string, googleEmail?: string, username?: string) => {
+  const handleAddTeamMember = (name: string, role: string, bizId: string, phone: string, pin: string, googleEmail?: string, username?: string): boolean => {
+    // Check credentials uniqueness
+    const dup = checkDuplicateCredentials(undefined, phone, username, googleEmail);
+    if (dup.hasDuplicate) {
+      showToastMsg(`Failed to add person: ${dup.message}`, true);
+      return false; // return failed status
+    }
+
     const raw = getTeam();
     const newMember: TeamMember = {
       id: 'u_' + Math.random().toString(36).substring(2, 11),
@@ -897,6 +984,7 @@ export default function App() {
     logAction('Staff Duty Seeded', `Hired ${name} as ${role} assigned directly to register duty under ${assignedBiz}.`);
     showToastMsg(`${name} added to payroll directory.`);
     refreshAllState();
+    return true; // return success status
   };
 
   const handleToggleTeamStatus = (memberId: string) => {
@@ -1340,6 +1428,8 @@ export default function App() {
                 <OwnerTeam
                   team={team}
                   businesses={businesses}
+                  transactions={transactions}
+                  currencySymbol={currencySymbol}
                   onAddTeamMember={handleAddTeamMember}
                   onToggleStatus={handleToggleTeamStatus}
                   onRemoveMember={handleRemoveMember}
@@ -1359,10 +1449,6 @@ export default function App() {
                   enterpriseName={enterpriseName}
                   lowStockThreshold={lowStockThreshold}
                   onSaveSettings={handleSaveSettings}
-                  ownerPhone={ownerPhone}
-                  ownerPin={ownerPin}
-                  ownerUsername={ownerUsername}
-                  ownerGoogleEmail={ownerGoogleEmail}
                 />
               )}
             </main>
@@ -1418,6 +1504,7 @@ export default function App() {
             onLogout={handleLogout}
             onShowToast={showToastMsg}
             onUpdateProfile={handleUpdateEmployeeProfile}
+            onAddProduct={handleAddProduct}
             onCreateEditRequest={handleCreateEditRequest}
             editRequests={editRequests}
           />
