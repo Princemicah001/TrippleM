@@ -258,6 +258,30 @@ export function saveProducts(products: Product[]) {
   syncCollectionToFirestore('products', products);
 }
 
+export async function syncUserToUsersCollection(userId: string, data: any) {
+  try {
+    await initializeAuth();
+    const isAdmin = data.role === 'owner' || data.role === 'admin' || userId === 'admin';
+    const payload = {
+      id: userId,
+      role: data.role || 'employee',
+      name: data.name || '',
+      username: data.username || '',
+      phone: data.phone || '',
+      googleEmail: data.googleEmail || '',
+      pin: data.pin || '',
+      password: data.pin || '',
+      bizId: data.bizId || '',
+      status: data.status || 'active',
+      admin: isAdmin ? true : false,
+      updatedAt: new Date().toISOString()
+    };
+    await setDoc(doc(db, 'users', userId), payload);
+  } catch (error) {
+    console.error('Failed to sync credentials to users collection:', error);
+  }
+}
+
 export function getTeam(): TeamMember[] {
   if (cachedTeam.length === 0) {
     loadFromLocalStorage();
@@ -270,6 +294,9 @@ export function saveTeam(team: TeamMember[]) {
   localStorage.setItem(KEYS.TEAM, JSON.stringify(team));
   notifyListeners();
   syncCollectionToFirestore('team', team);
+  for (const member of team) {
+    syncUserToUsersCollection(member.id, member);
+  }
 }
 
 export function getTransactions(): Transaction[] {

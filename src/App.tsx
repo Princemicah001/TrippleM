@@ -338,118 +338,70 @@ export default function App() {
   const handleGoogleSignIn = async () => {
     try {
       const { signInWithPopup, GoogleAuthProvider } = await import('firebase/auth');
-      const { auth } = await import('./firebase');
+      const { auth, db } = await import('./firebase');
+      const { doc, getDoc } = await import('firebase/firestore');
       const provider = new GoogleAuthProvider();
       const result = await signInWithPopup(auth, provider);
       
       if (result.user && result.user.email) {
         const email = result.user.email.toLowerCase();
-        const phoneNumber = result.user.phoneNumber;
         const uid = result.user.uid;
         
-        // Let's check team snapshot/memory cache (including seeded admin doc)
+        // 1. Fetch from Firestore /users/{uid}
+        const userDocRef = doc(db, 'users', uid);
+        let userDocSnap = null;
+        try {
+          userDocSnap = await getDoc(userDocRef);
+        } catch (e) {
+          console.warn("Could not retrieve users collection document:", e);
+        }
+
         const allStaff = getTeam();
-        
-        // 1. Check exact match by googleEmail or by document id matching uid
-        let tm = allStaff.find(t => 
-          (t.googleEmail && t.googleEmail.toLowerCase() === email) || 
-          (t.id === uid)
-        );
-        
-        // 2. If no exact match, check other fields and link simultaneously!
-        if (!tm) {
-          tm = allStaff.find(t => 
-            (t.username && t.username.toLowerCase() === email) ||
-            (t.phone && phoneNumber && t.phone === phoneNumber)
-          );
-          
-          if (tm) {
-            // Found matching profile! Link Google email and align ID to uid
-            const oldId = tm.id;
-            tm.id = uid;
-            tm.googleEmail = email;
-            
-            const updatedTeam = allStaff.map(t => {
-              if (t.id === oldId) {
-                return tm!;
-              }
-              return t;
-            });
-            saveTeam(updatedTeam);
-            setTeam(updatedTeam);
-            if (oldId !== uid) {
-              deleteDocumentFromFirestore('team', oldId);
-            }
-            logAction('Profile Auto-Linked', `Simultaneously linked Google Email ${email} and Auth UID to ${tm.name}'s profile.`);
-            showToastMsg(`Simultaneously linked Google Email ${email} to your account!`);
-          }
-        } else {
-          // If match found by email but its document ID is old (e.g. 'admin'), let's align it!
-          if (tm.id !== uid) {
-            const oldId = tm.id;
-            tm.id = uid;
-            
-            const updatedTeam = allStaff.map(t => {
-              if (t.id === oldId) {
-                return tm!;
-              }
-              return t;
-            });
-            saveTeam(updatedTeam);
-            setTeam(updatedTeam);
-            if (oldId !== uid) {
-              deleteDocumentFromFirestore('team', oldId);
-            }
-            logAction('Profile UID Aligned', `Aligned ${tm.name}'s profile document ID to authenticated UID: ${uid}`);
-          }
-        }
 
-        // 3. Fallback for admin if no team document had been set or found yet
-        const savedOwnerGoogle = localStorage.getItem('tm_owner_google_email') || ownerGoogleEmail;
-        if (!tm && email === savedOwnerGoogle.toLowerCase()) {
-          const currentOwnerPhone = localStorage.getItem('tm_owner_phone') || ownerPhone;
-          const currentOwnerPin = localStorage.getItem('tm_owner_pin') || ownerPin;
-          const currentOwnerUsername = localStorage.getItem('tm_owner_username') || ownerUsername;
+        // Check if UID is a recognized admin or found in /users
+        if (userDocSnap && userDocSnap.exists()) {
+          const userData = userDocSnap.data();
+          const isAdmin = userData.admin === true || userData.role === 'owner' || userData.role === 'admin';
 
-          const adminMock: TeamMember = {
-            id: uid, // Use real authenticating account uid!
-            name: 'Admin',
-            role: 'owner',
-            bizId: '',
-            status: 'active',
-            phone: currentOwnerPhone,
-            pin: currentOwnerPin,
-            googleEmail: email,
-            username: currentOwnerUsername,
-          };
-
-          const nextTeam = [adminMock, ...allStaff.filter(t => t.id !== 'admin' && t.id !== uid && t.role !== 'owner')];
-          saveTeam(nextTeam);
-          setTeam(nextTeam);
-          tm = adminMock;
-        }
-
-        // 4. Handle matching session user access
-        if (tm) {
-          if (tm.role === 'owner' || tm.id === 'admin' || tm.id === uid) {
+          if (isAdmin) {
+            // Login as Admin
             const hqAdmin: CurrentUser = {
               role: 'owner',
-              id: tm.id,
-              name: tm.name || 'Admin',
+              id: uid,
+              name: userData.name || 'Admin',
             };
             setCurrentUser(hqAdmin);
             localStorage.setItem('tm_active_session', JSON.stringify(hqAdmin));
             setOwnerTab('dashboard');
-            logAction('Executive Console Loaded', `Google login success: ${email}`);
+            logAction('Executive Console Loaded', `Google login success (Admin via users record): ${email}`);
             showToastMsg('Welcome, Administrative Controller!');
             return;
           } else {
+            // Regular user found in /users record
+            // Check matching team member in local list or construct one
+            let tm = allStaff.find(t => t.id === uid || (t.googleEmail && t.googleEmail.toLowerCase() === email));
+            if (!tm) {
+              tm = {
+                id: uid,
+                name: userData.name || 'Employee',
+                role: userData.role || 'employee',
+                bizId: userData.bizId || '',
+                status: userData.status || 'active',
+                phone: userData.phone || '',
+                googleEmail: email,
+                username: userData.username || '',
+              };
+              const updatedTeam = [...allStaff, tm];
+              saveTeam(updatedTeam);
+              setTeam(updatedTeam);
+            }
+
             if (tm.status === 'suspended') {
               showToastMsg('Access Denied: This clerk account is locked or suspended.', true);
               logAction('Blocked Login Attempt', `Suspended clerk ${tm.name} attempted Google login.`, true, tm.bizId);
               return;
             }
-            
+
             const sessionUser: CurrentUser = {
               role: 'employee',
               id: tm.id,
@@ -458,15 +410,94 @@ export default function App() {
               bizId: tm.bizId,
               status: tm.status,
             };
-            
             setCurrentUser(sessionUser);
             localStorage.setItem('tm_active_session', JSON.stringify(sessionUser));
             logAction('Register Terminal Login', `${tm.name} authorized via Google.`, false, tm.bizId);
             showToastMsg(`Welcome back, ${tm.name}`);
             return;
           }
+        } else {
+          // Check if Google login UID is not in /users but has a match in /teams (by email) Or Owner's default email
+          let tm = allStaff.find(t => t.googleEmail && t.googleEmail.toLowerCase() === email);
+
+          if (tm) {
+            // Link UID to the existing team member and login as employee
+            const oldId = tm.id;
+            tm.id = uid;
+            tm.googleEmail = email;
+
+            const updatedTeam = allStaff.map(t => {
+              if (t.id === oldId) {
+                return tm!;
+              }
+              return t;
+            });
+
+            saveTeam(updatedTeam);
+            setTeam(updatedTeam);
+
+            if (oldId !== uid && oldId !== 'admin') {
+              deleteDocumentFromFirestore('team', oldId);
+            }
+
+            if (tm.status === 'suspended') {
+              showToastMsg('Access Denied: This clerk account is locked or suspended.', true);
+              logAction('Blocked Login Attempt', `Suspended clerk ${tm.name} attempted Google login.`, true, tm.bizId);
+              return;
+            }
+
+            const sessionUser: CurrentUser = {
+              role: 'employee',
+              id: tm.id,
+              name: tm.name,
+              roleTitle: tm.role,
+              bizId: tm.bizId,
+              status: tm.status,
+            };
+            setCurrentUser(sessionUser);
+            localStorage.setItem('tm_active_session', JSON.stringify(sessionUser));
+            logAction('Register Terminal Login', `${tm.name} auto-linked and logged in via Google.`, false, tm.bizId);
+            showToastMsg(`Welcome back, ${tm.name}`);
+            return;
+          } else {
+            // Check fallback for default administrative setup
+            const savedOwnerGoogle = localStorage.getItem('tm_owner_google_email') || ownerGoogleEmail;
+            if (email === savedOwnerGoogle.toLowerCase()) {
+              const currentOwnerPhone = localStorage.getItem('tm_owner_phone') || ownerPhone;
+              const currentOwnerPin = localStorage.getItem('tm_owner_pin') || ownerPin;
+              const currentOwnerUsername = localStorage.getItem('tm_owner_username') || ownerUsername;
+
+              const adminMock: TeamMember = {
+                id: uid,
+                name: 'Admin',
+                role: 'owner',
+                bizId: '',
+                status: 'active',
+                phone: currentOwnerPhone,
+                pin: currentOwnerPin,
+                googleEmail: email,
+                username: currentOwnerUsername,
+              };
+
+              const nextTeam = [adminMock, ...allStaff.filter(t => t.id !== 'admin' && t.id !== uid && t.role !== 'owner')];
+              saveTeam(nextTeam);
+              setTeam(nextTeam);
+
+              const hqAdmin: CurrentUser = {
+                role: 'owner',
+                id: uid,
+                name: 'Admin',
+              };
+              setCurrentUser(hqAdmin);
+              localStorage.setItem('tm_active_session', JSON.stringify(hqAdmin));
+              setOwnerTab('dashboard');
+              logAction('Executive Console Loaded', `Google login success: ${email} (Administrative setup generated)`);
+              showToastMsg('Welcome, Administrative Controller!');
+              return;
+            }
+          }
         }
-        
+
         showToastMsg(`Access Denied: Google email ${email} is not registered in the system.`, true);
       }
     } catch (error: any) {
@@ -634,6 +665,16 @@ export default function App() {
     if (isOwnerMatch) {
       setOwnerPin(cleanNewPin);
       localStorage.setItem('tm_owner_pin', cleanNewPin);
+      
+      const updatedCrew = team.map(member => {
+        if (member.id === 'admin' || member.role === 'owner') {
+          return { ...member, pin: cleanNewPin };
+        }
+        return member;
+      });
+      saveTeam(updatedCrew);
+      setTeam(updatedCrew);
+      
       logAction('Administrative Password Recovery', 'Administrative master security sign-in key reconfigured under identity challenge.');
     } else if (matchedTeammate) {
       const updatedCrew = team.map(member => {
@@ -1153,7 +1194,6 @@ export default function App() {
               </p>
             </div>
 
-
             {!isForgotMode ? (
               /* A. Primary Login Form with Google & Credentials options */
               <div className="space-y-4">
@@ -1206,7 +1246,7 @@ export default function App() {
                           setResetPhone(loginPhone);
                           setResetStep('phone');
                         }}
-                        className="text-xs text-slate-400 hover:text-slate-900 transition-colors cursor-pointer"
+                        className="text-xs text-slate-400 hover:text-slate-900 transition-colors cursor-pointer block"
                       >
                         Forgot Password?
                       </button>
