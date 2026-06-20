@@ -12,7 +12,8 @@ import {
   Info,
   Layers
 } from 'lucide-react';
-import { Business, Transaction, TeamMember } from '../types';
+import { Business, Transaction, TeamMember, CurrentUser } from '../types';
+import { logAction } from '../db';
 
 interface OwnerAnalyticsProps {
   businesses: Business[];
@@ -20,6 +21,7 @@ interface OwnerAnalyticsProps {
   team: TeamMember[];
   onShowToast: (msg: string, isError?: boolean) => void;
   currencySymbol?: string;
+  currentUser: CurrentUser | null;
 }
 
 export default function OwnerAnalytics({
@@ -28,6 +30,7 @@ export default function OwnerAnalytics({
   team,
   onShowToast,
   currencySymbol = 'KSh',
+  currentUser,
 }: OwnerAnalyticsProps) {
   // Timeline selection: 'week' (7 days), 'month' (30 days), 'all' (Jan 1 to date)
   const [timeline, setTimeline] = useState<'week' | 'month' | 'all'>('month');
@@ -170,6 +173,125 @@ export default function OwnerAnalytics({
     }))
     .sort((a, b) => b.amount - a.amount);
 
+  // --- Calculate Business Performance and Goods Movements ---
+  let totalSalesCount = 0;
+  let totalItemsSold = 0;
+  let totalRestocksCount = 0;
+  let totalRestocksCost = 0;
+
+  const productSummary: {
+    [name: string]: {
+      soldQty: number;
+      soldValue: number;
+      restockedQty: number;
+      restockedValue: number;
+      bizId?: string;
+    };
+  } = {};
+
+  const chronologicalMovements: {
+    time: string;
+    type: 'Inflow (Restock)' | 'Outflow (Sale)';
+    itemName: string;
+    qty: number;
+    amount: number;
+    bizName: string;
+  }[] = [];
+
+  transactions.forEach((t) => {
+    const tDate = new Date(t.time);
+    const matchesBiz = selectedBizId === 'all' || t.bizId === selectedBizId;
+    if (tDate >= activeScopeStart && matchesBiz) {
+      const bizName = getBusinessName(t.bizId);
+      if (t.type === 'sale') {
+        totalSalesCount++;
+        let itemsCountInTx = 0;
+        if (t.cart && t.cart.length > 0) {
+          t.cart.forEach((c) => {
+            const qty = c.qty || 0;
+            itemsCountInTx += qty;
+            totalItemsSold += qty;
+
+            const name = c.name;
+            if (!productSummary[name]) {
+              productSummary[name] = { soldQty: 0, soldValue: 0, restockedQty: 0, restockedValue: 0, bizId: t.bizId };
+            }
+            productSummary[name].soldQty += qty;
+            productSummary[name].soldValue += qty * (c.price || 0);
+
+            chronologicalMovements.push({
+              time: t.time,
+              type: 'Outflow (Sale)',
+              itemName: name,
+              qty: qty,
+              amount: qty * (c.price || 0),
+              bizName,
+            });
+          });
+        } else {
+          const qty = t.items || 1;
+          totalItemsSold += qty;
+          const name = t.details || 'Miscellaneous Sale';
+          if (!productSummary[name]) {
+            productSummary[name] = { soldQty: 0, soldValue: 0, restockedQty: 0, restockedValue: 0, bizId: t.bizId };
+          }
+          productSummary[name].soldQty += qty;
+          productSummary[name].soldValue += t.amount;
+
+          chronologicalMovements.push({
+            time: t.time,
+            type: 'Outflow (Sale)',
+            itemName: name,
+            qty: qty,
+            amount: t.amount,
+            bizName,
+          });
+        }
+      } else if (t.type === 'expense' && (t.category === 'Stock' || t.category === 'inventory' || t.category === 'restock')) {
+        totalRestocksCount++;
+        totalRestocksCost += t.amount;
+
+        let restockQty = 1;
+        let prodName = t.details || 'Inventory Stock';
+        if (t.details) {
+          let match = t.details.match(/Added\s+(\d+)x\s+(.+)/i);
+          if (match) {
+            restockQty = parseInt(match[1], 10);
+            prodName = match[2];
+          } else {
+            match = t.details.match(/Restocked\s+(\d+)\s+units\s+of\s+(.+)/i);
+            if (match) {
+              restockQty = parseInt(match[1], 10);
+              prodName = match[2];
+            }
+          }
+        }
+
+        if (!productSummary[prodName]) {
+          productSummary[prodName] = { soldQty: 0, soldValue: 0, restockedQty: 0, restockedValue: 0, bizId: t.bizId };
+        }
+        productSummary[prodName].restockedQty += restockQty;
+        productSummary[prodName].restockedValue += t.amount;
+
+        chronologicalMovements.push({
+          time: t.time,
+          type: 'Inflow (Restock)',
+          itemName: prodName,
+          qty: restockQty,
+          amount: t.amount,
+          bizName,
+        });
+      }
+    }
+  });
+
+  chronologicalMovements.sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime());
+
+  const productMovementList = Object.entries(productSummary).map(([name, stats]) => ({
+    name,
+    ...stats,
+  })).filter(p => p.soldQty > 0 || p.restockedQty > 0);
+
   // --- Calendar Cell Mapping ---
   const firstDayIndex = new Date(currentYear, currentMonth, 1).getDay();
   const daysInMonthCount = new Date(currentYear, currentMonth + 1, 0).getDate();
@@ -195,12 +317,21 @@ export default function OwnerAnalytics({
       const activeBizLabel = selectedBizId === 'all' ? 'All Registered Shops' : getBusinessName(selectedBizId);
       const spanText = timeline === 'week' ? 'Past 7 Days' : timeline === 'month' ? 'This Month to Date' : 'Year to Date by Month';
 
+      const printedByStr = currentUser ? `${currentUser.name} (${currentUser.role === 'owner' ? 'Owner' : 'Staff'})` : 'System Admin';
+
+      // Log who printed the report in the system audit logs!
+      logAction(
+        'Performance Report Printed',
+        `Executive Performance Report CSV downloaded by ${printedByStr} for ${activeBizLabel} Scope (${spanText}).`
+      );
+
       let csv = '\uFEFF'; // UTF-8 Byte Order Mark
       csv += `TRIPPLEM ENTERPRISE - DAILY BUSINESS PERFORMANCE REPORT\n`;
       csv += `Outlet,${activeBizLabel}\n`;
       csv += `Period,${spanText}\n`;
       csv += `Base Currency,${currencySymbol}\n`;
-      csv += `Exported At,${new Date().toLocaleString()}\n\n`;
+      csv += `Exported At,${new Date().toLocaleString()}\n`;
+      csv += `Printed By,${printedByStr}\n\n`;
 
       csv += `Period/Date,Sales Income (${currencySymbol}),Overhead Expenses (${currencySymbol}),Net Profit/Loss (${currencySymbol}),Status\n`;
 
@@ -217,7 +348,22 @@ export default function OwnerAnalytics({
       csv += `AGGREGATED ANALYSIS SUMMARY\n`;
       csv += `Total Gross Sales (${currencySymbol}),${grossRevSum.toFixed(2)}\n`;
       csv += `Total Overhead Expenses (${currencySymbol}),${totalExpSum.toFixed(2)}\n`;
-      csv += `Net Corporate Profit/Loss (${currencySymbol}),${(grossRevSum - totalExpSum).toFixed(2)}\n`;
+      csv += `Net Corporate Profit/Loss (${currencySymbol}),${(grossRevSum - totalExpSum).toFixed(2)}\n\n`;
+
+      csv += `BUSINESS PERFORMANCE KPIs\n`;
+      csv += `Metric,Value\n`;
+      csv += `"Total Checkout Sales (Transactions Count)",${totalSalesCount}\n`;
+      csv += `"Total Product Items Sold (Volume)",${totalItemsSold}\n`;
+      csv += `"Average Checkout Basket Ticket Size",${(totalSalesCount > 0 ? grossRevSum / totalSalesCount : 0).toFixed(2)}\n`;
+      csv += `"Total Stock Replenishments Count",${totalRestocksCount}\n`;
+      csv += `"Total Procurement Cost (Capital Outflow)",${totalRestocksCost.toFixed(2)}\n`;
+      csv += `"Net Operating Position",${(grossRevSum - totalExpSum).toFixed(2)}\n\n`;
+
+      csv += `GOODS MOVEMENTS SUMMARY (INVENTORY TURNOVER)\n`;
+      csv += `Product Name,Sold Qty (Outflow),Sales Value (${currencySymbol}),Restocked Qty (Inflow),Procurement Cost (${currencySymbol})\n`;
+      productMovementList.forEach((p) => {
+        csv += `"${p.name}",${p.soldQty},${p.soldValue.toFixed(2)},${p.restockedQty},${p.restockedValue.toFixed(2)}\n`;
+      });
 
       const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
       const url = window.URL.createObjectURL(blob);
@@ -238,6 +384,14 @@ export default function OwnerAnalytics({
     try {
       const activeBizLabel = selectedBizId === 'all' ? 'All Registered Shops' : getBusinessName(selectedBizId);
       const spanText = timeline === 'week' ? 'Past 7 Days' : timeline === 'month' ? 'This Month to Date' : 'Year to Date by Month';
+
+      const printedByStr = currentUser ? `${currentUser.name} (${currentUser.role === 'owner' ? 'Owner' : 'Staff'})` : 'System Admin';
+
+      // Log who printed the report in the system audit logs!
+      logAction(
+        'Performance Report Printed',
+        `Executive Performance Report PDF downloaded by ${printedByStr} for ${activeBizLabel} Scope (${spanText}).`
+      );
 
       const doc = new jsPDF({
         orientation: 'portrait',
@@ -279,6 +433,7 @@ export default function OwnerAnalytics({
       doc.text(`Target Scope: ${activeBizLabel}`, 15, 52);
       doc.text(`Generated At: ${new Date().toLocaleString()}`, 115, 48);
       doc.text(`Base Currency: ${currencySymbol}`, 115, 52);
+      doc.text(`Printed By: ${printedByStr}`, 15, 56);
 
       // KPI cards backing section
       doc.setFillColor(lightBg[0], lightBg[1], lightBg[2]);
@@ -400,10 +555,151 @@ export default function OwnerAnalytics({
         currentY += 7.2;
       });
 
-      // Signature / Disclaimer layout
-      if (currentY > 265) {
+      // --- business performance matrix table section ---
+      if (currentY > 210) {
         doc.addPage();
         currentY = 20;
+      } else {
+        currentY += 12;
+      }
+
+      doc.setFont('Helvetica', 'bold');
+      doc.setFontSize(11);
+      doc.setTextColor(primaryColor[0], primaryColor[1], primaryColor[2]);
+      doc.text('Operational Business Performance summary', 15, currentY);
+
+      doc.setFillColor(primaryColor[0], primaryColor[1], primaryColor[2]);
+      doc.rect(15, currentY + 3, 180, 8, 'F');
+
+      doc.setFontSize(8);
+      doc.setFont('Helvetica', 'bold');
+      doc.setTextColor(255, 255, 255);
+      doc.text('Performance Indicator / Operational Metric', 20, currentY + 8.5);
+      doc.text('Consolidated Aggregate Metrics Value', 130, currentY + 8.5);
+
+      currentY += 11;
+      doc.setFont('Helvetica', 'normal');
+      doc.setTextColor(51, 65, 85);
+
+      const kpiRows = [
+        { label: 'Total Number of Checkout Sales (Transactions Count)', val: `${totalSalesCount} transactions` },
+        { label: 'Total Capital Unit Stock Volume Sold', val: `${totalItemsSold} units` },
+        { label: 'Average Checkout Basket Ticket Size', val: `${currencySymbol} ${(totalSalesCount > 0 ? grossRevSum / totalSalesCount : 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` },
+        { label: 'Total Stock Replenishments Events Logged', val: `${totalRestocksCount} restock actions` },
+        { label: 'Total Cost Outlay on Procured Inflow Stock', val: `${currencySymbol} ${totalRestocksCost.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` },
+        { label: 'Consolidated Gross Register Outflow (Expense Matrix)', val: `${currencySymbol} ${totalExpSum.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` },
+        { label: 'Net Cumulative Operational Surplus / Margin', val: `${currencySymbol} ${(grossRevSum - totalExpSum).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` }
+      ];
+
+      kpiRows.forEach((row, rIdx) => {
+        if (rIdx % 2 === 0) {
+          doc.setFillColor(lightBg[0], lightBg[1], lightBg[2]);
+          doc.rect(15, currentY, 180, 7.2, 'F');
+        }
+
+        doc.setFont('Helvetica', 'normal');
+        doc.text(row.label, 20, currentY + 5);
+
+        if (rIdx === 6) {
+          const netVal = grossRevSum - totalExpSum;
+          doc.setTextColor(netVal >= 0 ? 16 : 244, netVal >= 0 ? 185 : 63, netVal >= 0 ? 129 : 94);
+          doc.setFont('Helvetica', 'bold');
+        } else {
+          doc.setTextColor(51, 65, 85);
+          doc.setFont('Helvetica', 'bold');
+        }
+
+        doc.text(row.val, 130, currentY + 5);
+
+        doc.setDrawColor(borderLineColor[0], borderLineColor[1], borderLineColor[2]);
+        doc.setLineWidth(0.25);
+        doc.line(15, currentY + 7.2, 195, currentY + 7.2);
+        currentY += 7.2;
+      });
+
+      // --- goods movements section ---
+      if (currentY > 180) {
+        doc.addPage();
+        currentY = 20;
+      } else {
+        currentY += 12;
+      }
+
+      doc.setFont('Helvetica', 'bold');
+      doc.setFontSize(11);
+      doc.setTextColor(primaryColor[0], primaryColor[1], primaryColor[2]);
+      doc.text('Goods Movements & Stock Inventory Turnover', 15, currentY);
+
+      doc.setFillColor(primaryColor[0], primaryColor[1], primaryColor[2]);
+      doc.rect(15, currentY + 3, 180, 8, 'F');
+
+      doc.setFontSize(8);
+      doc.setFont('Helvetica', 'bold');
+      doc.setTextColor(255, 255, 255);
+      doc.text('Product Item Catalog', 20, currentY + 8.5);
+      doc.text('Outflow (Sold)', 75, currentY + 8.5);
+      doc.text('Net Revenue Received', 105, currentY + 8.5);
+      doc.text('Inflow (Restocked)', 140, currentY + 8.5);
+      doc.text('Unit Expense Paid', 170, currentY + 8.5);
+
+      currentY += 11;
+      doc.setFont('Helvetica', 'normal');
+      doc.setTextColor(51, 65, 85);
+
+      if (productMovementList.length > 0) {
+        productMovementList.forEach((item, pIdx) => {
+          if (currentY > 270) {
+            doc.addPage();
+            currentY = 20;
+
+            doc.setFillColor(primaryColor[0], primaryColor[1], primaryColor[2]);
+            doc.rect(15, currentY, 180, 8, 'F');
+            doc.setFontSize(8);
+            doc.setFont('Helvetica', 'bold');
+            doc.setTextColor(255, 255, 255);
+            doc.text('Product Item Catalog', 20, currentY + 5.5);
+            doc.text('Outflow (Sold)', 75, currentY + 5.5);
+            doc.text('Net Revenue Received', 105, currentY + 5.5);
+            doc.text('Inflow (Restocked)', 140, currentY + 5.5);
+            doc.text('Unit Expense Paid', 170, currentY + 5.5);
+            currentY += 8;
+            doc.setFont('Helvetica', 'normal');
+            doc.setTextColor(51, 65, 85);
+          }
+
+          if (pIdx % 2 === 0) {
+            doc.setFillColor(lightBg[0], lightBg[1], lightBg[2]);
+            doc.rect(15, currentY, 180, 7.2, 'F');
+          }
+
+          doc.setFont('Helvetica', 'bold');
+          doc.text(item.name.substring(0, 24), 20, currentY + 5);
+
+          doc.setFont('Helvetica', 'normal');
+          doc.text(`${item.soldQty} units`, 75, currentY + 5);
+          doc.text(`${currencySymbol} ${item.soldValue.toLocaleString()}`, 105, currentY + 5);
+          doc.text(`${item.restockedQty} units`, 140, currentY + 5);
+          doc.text(`${currencySymbol} ${item.restockedValue.toLocaleString()}`, 170, currentY + 5);
+
+          doc.setDrawColor(borderLineColor[0], borderLineColor[1], borderLineColor[2]);
+          doc.setLineWidth(0.25);
+          doc.line(15, currentY + 7.2, 195, currentY + 7.2);
+          currentY += 7.2;
+        });
+      } else {
+        doc.setFillColor(lightBg[0], lightBg[1], lightBg[2]);
+        doc.rect(15, currentY, 180, 10, 'F');
+        doc.setFont('Helvetica', 'italic');
+        doc.text('No active product unit flows (sales or replenishment) registered during this period range.', 20, currentY + 6);
+        currentY += 10;
+      }
+
+      // Signature / Disclaimer layout
+      if (currentY > 260) {
+        doc.addPage();
+        currentY = 20;
+      } else {
+        currentY += 10;
       }
       doc.setDrawColor(borderLineColor[0], borderLineColor[1], borderLineColor[2]);
       doc.setLineWidth(0.5);
@@ -863,6 +1159,131 @@ export default function OwnerAnalytics({
           ) : (
             <p className="text-xs text-slate-400 italic text-center py-8">No overhead records registered in active scope.</p>
           )}
+        </div>
+      </div>
+
+      {/* SECTION: Business Performance Dashboard & Goods Movements Audit Tab */}
+      <div className="bg-white border border-slate-200 rounded-2xl shadow-xs p-6 space-y-6">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-slate-100">
+          <div>
+            <span className="text-[10px] font-extrabold text-slate-400 uppercase tracking-widest">Enterprise Ledger Auditing</span>
+            <h3 className="text-base font-extrabold text-slate-900 mt-1">Operational Performance & Goods Movements</h3>
+          </div>
+          <div className="text-xs text-slate-500 font-bold bg-slate-50 border border-slate-200 px-3 py-1.5 rounded-xl">
+            Active Scope: <span className="text-slate-900 capitalize">{timeline === 'week' ? 'Past 7 Days' : timeline === 'month' ? 'This Month' : 'Year to Date'}</span>
+          </div>
+        </div>
+
+        {/* 1. Extended Business Performance Metrics Grid */}
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="bg-slate-50 border border-slate-100 p-4 rounded-xl space-y-1">
+            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Checkout Transactions</span>
+            <p className="text-xl font-black text-slate-900">{totalSalesCount}</p>
+            <span className="text-[10px] font-medium text-slate-500">Sales events processed</span>
+          </div>
+          <div className="bg-slate-50 border border-slate-100 p-4 rounded-xl space-y-1">
+            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Unit Sales Volume</span>
+            <p className="text-xl font-black text-slate-900">{totalItemsSold} units</p>
+            <span className="text-[10px] font-medium text-slate-500">Products moved outbound</span>
+          </div>
+          <div className="bg-slate-50 border border-slate-100 p-4 rounded-xl space-y-1">
+            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Average Basket Size</span>
+            <p className="text-xl font-black text-slate-900">
+              {formatCurrency(totalSalesCount > 0 ? grossRevSum / totalSalesCount : 0)}
+            </p>
+            <span className="text-[10px] font-medium text-slate-500">Value per ticket</span>
+          </div>
+          <div className="bg-slate-50 border border-slate-100 p-4 rounded-xl space-y-1">
+            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Replenishments</span>
+            <p className="text-xl font-black text-slate-900">{totalRestocksCount} events</p>
+            <span className="text-[10px] font-medium text-emerald-600">Cost: {formatCurrency(totalRestocksCost)}</span>
+          </div>
+        </div>
+
+        {/* 2. Goods Movements Table (Inventory Turnover) */}
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <h4 className="text-xs font-extrabold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+              <span className="w-2 h-2 rounded-full bg-indigo-500" /> Catalog Inventory Turnover Valuation
+            </h4>
+            <span className="text-[11px] font-bold text-slate-400 uppercase">{productMovementList.length} Active Items</span>
+          </div>
+
+          <div className="border border-slate-100 rounded-xl overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead className="bg-slate-50 text-slate-500 font-extrabold uppercase text-[10px] tracking-wider border-b border-slate-150">
+                  <tr>
+                    <th className="py-2.5 px-4 font-black">Product Catalog Name</th>
+                    <th className="py-2.5 px-4 text-right font-black">Units Sold (Outflow)</th>
+                    <th className="py-2.5 px-4 text-right font-black">Value Generated</th>
+                    <th className="py-2.5 px-4 text-right font-black">Units Restocked (Inflow)</th>
+                    <th className="py-2.5 px-4 text-right font-black">Procurement Cost</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 font-bold text-slate-700">
+                  {productMovementList.length > 0 ? (
+                    productMovementList.map((product) => {
+                      return (
+                        <tr key={product.name} className="hover:bg-slate-50/50 transition">
+                          <td className="py-2.5 px-4 text-slate-900 font-black">{product.name}</td>
+                          <td className="py-2.5 px-4 text-right text-rose-600">{product.soldQty}x</td>
+                          <td className="py-2.5 px-4 text-right text-slate-900">{formatCurrency(product.soldValue)}</td>
+                          <td className="py-2.5 px-4 text-right text-emerald-600">+{product.restockedQty}x</td>
+                          <td className="py-2.5 px-4 text-right text-emerald-700">{formatCurrency(product.restockedValue)}</td>
+                        </tr>
+                      );
+                    })
+                  ) : (
+                    <tr>
+                      <td colSpan={5} className="py-8 text-center text-slate-400 italic font-medium">
+                        No goods movements mapped within the active chronological scope.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        {/* 3. Chronological Goods Movements Live Audit Ledger Log */}
+        <div className="space-y-3 pt-2">
+          <h4 className="text-xs font-extrabold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+            <span className="w-2 h-2 rounded-full bg-emerald-500" /> Live Audit Trail: Central Goods Movements Log
+          </h4>
+          <div className="border border-slate-100 rounded-xl divide-y divide-slate-100 overflow-hidden text-xs max-h-[240px] overflow-y-auto">
+            {chronologicalMovements.length > 0 ? (
+              chronologicalMovements.map((mov, mIdx) => {
+                const isRestock = mov.type === 'Inflow (Restock)';
+                return (
+                  <div key={mIdx} className="p-3 hover:bg-slate-50/50 transition flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <div className="flex items-center gap-2.5">
+                      <span className={`px-1.5 py-0.5 rounded text-[8px] font-black uppercase ${isRestock ? 'bg-emerald-50 text-emerald-700 border border-emerald-100' : 'bg-rose-50 text-rose-700 border border-rose-100'}`}>
+                        {isRestock ? 'Inflow' : 'Outflow'}
+                      </span>
+                      <div className="space-y-0.5">
+                        <p className="font-extrabold text-slate-950">{mov.itemName}</p>
+                        <p className="text-[10px] font-bold text-slate-400 flex items-center gap-1">
+                          <span>{mov.bizName}</span>
+                          <span>•</span>
+                          <span>{new Date(mov.time).toLocaleDateString()} {new Date(mov.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                        </p>
+                      </div>
+                    </div>
+                    <div className="text-left sm:text-right">
+                      <p className={`font-black ${isRestock ? 'text-emerald-700' : 'text-slate-900'}`}>
+                        {isRestock ? `+${mov.qty} units` : `-${mov.qty} units`}
+                      </p>
+                      <p className="text-[10px] font-bold text-slate-400">Value: {formatCurrency(mov.amount)}</p>
+                    </div>
+                  </div>
+                );
+              })
+            ) : (
+              <p className="p-6 text-center text-slate-400 italic font-medium">No real-time inventory inflows or outflows logged in active window range.</p>
+            )}
+          </div>
         </div>
       </div>
 

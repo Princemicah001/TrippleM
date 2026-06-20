@@ -69,7 +69,7 @@ export default function OwnerTeam({
       onShowToast('All input fields, including Phone, are required.', true);
       return;
     }
-    const success = onAddTeamMember(name, role, bizId, phone.trim(), '12345678', googleEmail.trim() || undefined, username.trim() || undefined);
+    const success = onAddTeamMember(name, role, bizId, phone.trim(), '12345678', googleEmail.trim() || "", username.trim() || undefined);
     if (success) {
       setModalOpen(false);
       setName('');

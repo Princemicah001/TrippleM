@@ -1014,7 +1014,7 @@ export default function App() {
       status: 'active',
       phone,
       pin,
-      googleEmail,
+      googleEmail: googleEmail || '',
       username,
     };
     raw.push(newMember);
@@ -1433,6 +1433,7 @@ export default function App() {
                   team={team}
                   onShowToast={showToastMsg}
                   currencySymbol={currencySymbol}
+                  currentUser={currentUser}
                 />
               )}
               {ownerTab === 'businesses' && (

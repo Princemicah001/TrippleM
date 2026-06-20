@@ -87,6 +87,7 @@ export default function EmployeeDashboard({
   const [profileUsername, setProfileUsername] = useState(currentUser.username || '');
   const [profilePhone, setProfilePhone] = useState(currentUser.phone || '');
   const [profilePin, setProfilePin] = useState(currentUser.pin || '');
+  const [profileGoogleEmail, setProfileGoogleEmail] = useState(currentUser.googleEmail || '');
 
   // 6. Cashier product creation hooks
   const [employeeAddProdModal, setEmployeeAddProdModal] = useState(false);
@@ -103,6 +104,7 @@ export default function EmployeeDashboard({
     setProfileUsername(currentUser.username || '');
     setProfilePhone(currentUser.phone || '');
     setProfilePin(currentUser.pin || '');
+    setProfileGoogleEmail(currentUser.googleEmail || '');
   }, [currentUser]);
 
   const formatCurrency = (val: number) => {
@@ -289,6 +291,7 @@ export default function EmployeeDashboard({
       username: cleanUsername,
       phone: cleanPhone,
       pin: cleanPin,
+      googleEmail: profileGoogleEmail.trim() || '',
     };
 
     const success = onUpdateProfile(updatedMember);
@@ -1010,6 +1013,22 @@ export default function EmployeeDashboard({
                     value={profilePhone}
                     onChange={(e) => setProfilePhone(e.target.value)}
                   />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-500 mb-1.5">
+                    Google Email Address (Optional)
+                  </label>
+                  <input
+                    type="email"
+                    className="w-full border border-slate-200 px-4 py-2.5 text-sm rounded-xl outline-none focus:border-slate-900 font-sans font-medium transition bg-slate-50 focus:bg-white"
+                    placeholder="e.g. attendant@gmail.com"
+                    value={profileGoogleEmail}
+                    onChange={(e) => setProfileGoogleEmail(e.target.value)}
+                  />
+                  <p className="text-[10px] text-slate-400 mt-1">
+                    Your registered Google account email. Leave empty if unassigned or not registered.
+                  </p>
                 </div>
 
                 <div>
