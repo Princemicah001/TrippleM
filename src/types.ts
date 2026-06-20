@@ -78,7 +78,7 @@ export interface LogEditRequest {
   adminMemo?: string;
 }
 
-export type OwnerTab = 'dashboard' | 'analytics' | 'businesses' | 'team' | 'logs' | 'settings';
+export type OwnerTab = 'dashboard' | 'analytics' | 'businesses' | 'team' | 'logs';
 
 export type UserRole = 'owner' | 'employee';
 

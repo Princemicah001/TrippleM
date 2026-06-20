@@ -25,7 +25,6 @@ export default function Sidebar({
     { id: 'businesses' as OwnerTab, icon: Briefcase, label: 'Shops' },
     { id: 'team' as OwnerTab, icon: Users, label: 'Team' },
     { id: 'logs' as OwnerTab, icon: Activity, label: 'Logs' },
-    { id: 'settings' as OwnerTab, icon: Settings, label: 'Settings' },
   ];
 
   return (

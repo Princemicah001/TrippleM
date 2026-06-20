@@ -11,8 +11,7 @@ import {
   ChevronRight,
   Info,
   CheckCircle,
-  AlertCircle,
-  Settings
+  AlertCircle
 } from 'lucide-react';
 
 import {
@@ -52,7 +51,6 @@ import OwnerAnalytics from './components/OwnerAnalytics';
 import OwnerBranches from './components/OwnerBranches';
 import OwnerTeam from './components/OwnerTeam';
 import OwnerLogs from './components/OwnerLogs';
-import OwnerSettings from './components/OwnerSettings';
 import EmployeeDashboard from './components/EmployeeDashboard';
 import { auth } from './firebase';
 
@@ -1366,18 +1364,6 @@ export default function App() {
                 >
                   <Activity className="w-4 h-4" />
                 </button>
-                {/* Active Settings Link */}
-                <button
-                  onClick={() => setOwnerTab('settings')}
-                  className={`p-2.5 rounded-xl transition cursor-pointer ${
-                    ownerTab === 'settings'
-                      ? 'bg-slate-900 text-white shadow-xs'
-                      : 'text-slate-400 hover:text-slate-900 hover:bg-slate-100'
-                  }`}
-                  title="System Preferences"
-                >
-                  <Settings className="w-4 h-4" />
-                </button>
                 {/* Active Logout Link */}
                 <button
                   onClick={handleLogout}
@@ -1442,13 +1428,6 @@ export default function App() {
                   businesses={businesses}
                   editRequests={editRequests}
                   onHandleEditRequest={handleResolveEditRequest}
-                />
-              )}
-              {ownerTab === 'settings' && (
-                <OwnerSettings
-                  enterpriseName={enterpriseName}
-                  lowStockThreshold={lowStockThreshold}
-                  onSaveSettings={handleSaveSettings}
                 />
               )}
             </main>
