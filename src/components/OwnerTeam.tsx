@@ -179,7 +179,6 @@ export default function OwnerTeam({
               title="Return to list"
             >
               <ArrowLeft className="w-4 h-4 mr-1" />
-              <span className="font-bold text-[10px] uppercase tracking-wider font-sans">Back</span>
             </button>
             
             <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 truncate text-slate-500 font-medium">
@@ -189,13 +188,8 @@ export default function OwnerTeam({
               <span className="text-slate-300">|</span>
               <span className="capitalize">Role: <strong className="text-slate-850 font-bold">{selectedMember.role}</strong></span>
             </div>
-          </div>
-        </div>
 
-        {/* Dropdown filters and search ledger option */}
-        <div className="bg-white border border-slate-200 p-4 rounded-2xl shadow-xs space-y-3">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
-            <div className="flex flex-wrap items-center gap-3">
+            
               <div className="flex items-center gap-2">
                 <select
                   value={timeFilter}
@@ -222,19 +216,21 @@ export default function OwnerTeam({
                   <option value="cash_count">Cash Counts</option>
                 </select>
               </div>
-            </div>
-
-            <div className="relative w-full sm:max-w-md">
+          
               <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
               <input
                 type="text"
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 placeholder="Search cashier receipts by amount, category name, or statement details..."
-                className="w-full border border-slate-205 p-2 pr-4 pl-10 text-xs rounded-xl outline-none focus:border-slate-905 font-sans font-medium bg-slate-50/50"
+                className="w-50 border border-slate-205 p-2 pr-4 pl-10 text-xs rounded-xl outline-none focus:border-slate-905 font-sans font-medium bg-slate-50/50"
               />
             </div>
-          </div>
+            
+        </div>
+
+        {/* Dropdown filters and search ledger option */}
+        <div className="bg-white border border-slate-200 p-4 rounded-2xl shadow-xs space-y-3">
 
           {/* Date range inputs */}
           {timeFilter === 'custom' && (
